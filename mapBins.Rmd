@@ -86,7 +86,7 @@ names(birdPreds) <- c("birdMatricies", "nonforBirdPreds", "ageClassDefs")
 
 
 ```{r LCC2005}
-rasterToMatch <- raster("C:/Users/RALAS6/Documents/Repositories/mapBins/inputs/LCC2005_V1_4a.tif")
+rasterToMatch <- raster("C:/Users/RALAS6/Documents/Repositories/mapBins/LCC2005_V1_4a.tif")
 #rasterToMatch <- LandR::prepInputsLCC(destinationPath = inputsDir) #gets LCC2010
 ```
 
@@ -142,18 +142,6 @@ names(forClassRaster) <- c("forClassRaster")
 
 forClassRaster[forClassRaster == 0] <- NA
 
-# #rename the categories found in the rasters
-# namesValues <- as.factor(unique(forClassRaster))
-# newVals <- unlist(lapply(X = namesValues, FUN = function(x) {
-# newVal <-  as.factor(paste0("FR", x))
-#     return(newVal)
-#   }))
-# reclassVector <- c(rbind(namesValues, newVals))
-# reclassMatrix <- matrix(reclassVector,
-#                               ncol=2, byrow = TRUE)
-# forClassRaster <- reclassify(forClassRaster,
-#                      reclassMatrix)
-
 plot(forClassRaster) #visually check forClassRaster
 
 ```
@@ -186,18 +174,6 @@ nonForRaster <- overlay(x = nonForRaster, y = forClassRaster, fun = function(x, 
                           return(x)
                             })
 
-#rename the categories found in the rasters
-# namesValues <- unique(nonForRaster)
-# newVals <- unlist(lapply(X = namesValues, FUN = function(x) {
-# newVal <-  as.factor(paste0("NF", x))    
-#     return(newVal)
-#   }))
-# reclassVector <- c(rbind(namesValues, newVals))
-# reclassMatrix <- matrix(reclassVector, 
-#                               ncol=2, byrow = TRUE)
-# nonForRaster <- reclassify(nonForRaster,
-#                      reclassMatrix)
-
 plot(nonForRaster) #visually check nonForRaster
 
 ```
@@ -226,6 +202,21 @@ plot(forAgeRaster) #visually check ageRaster
 ```
 
 
+#Reclassify the forAgeRaster to ageClassRaster
+
+```{r make ageClassRaster}
+
+#reclassify forAgeRaster into a raster of forest age classes
+birdPreds$ageClassDefs <- birdPreds$ageClassDefs[, ageClasses:=as.integer(ageClasses)] #change data type of ageClassDefs
+ageClassRaster <- forAgeRaster #make copy of forAgeRaster to be reclassified
+ageClassRaster <- reclassify(ageClassRaster, birdPreds$ageClassDefs) #do the reclassification based on ageClassDefs
+names(ageClassRaster) <- "ageClassRaster" 
+ageClassRaster#check over the raster that has been reclassified
+plot(ageClassRaster)
+
+```
+
+
 # Create new raster of predicted bird densities for the whole studyArea
 
 ## 1D mapBins
@@ -240,15 +231,6 @@ plot(raster1DBins)
 
 
 ```{r 2D mapBins}
-
-
-#reclassify forAgeRaster into a raster of forest age classes
-birdPreds$ageClassDefs <- birdPreds$ageClassDefs[, ageClasses:=as.integer(ageClasses)] #change data type of ageClassDefs
-ageClassRaster <- forAgeRaster #make copy of forAgeRaster to be reclassified
-ageClassRaster <- reclassify(ageClassRaster, birdPreds$ageClassDefs) #do the reclassification based on ageClassDefs
-names(ageClassRaster) <- "ageClassRaster" 
-ageClassRaster#check over the raster that has been reclassified
-plot(ageClassRaster)
 
 # check that spatial extent is the same for ageClassraster and forClassraster
 extent(forClassRaster) == extent(ageClassRaster)
