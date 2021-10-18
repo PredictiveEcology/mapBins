@@ -1,0 +1,283 @@
+---
+title: "mapBins"
+author: "Isolde Lane Shaw"
+date: "10/13/2021"
+output: html_document
+---
+
+#mapBins Module
+
+Inputs: birdPreds, forestClassRaster, ageRaster, coverClassRaster, studyArea, rasterToMatch 
+
+Outputs: raster of predicted bird density (according to postHocBinning) across the studyArea landscape 
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r packages}
+library(Require)
+
+#list packages to load
+Require("data.table")
+Require("rgdal")
+Require("sf")
+Require("raster")
+Require("SpaDES.core") ## TODO: not used
+Require("LandR")
+Require("googledrive")
+Require("plotrix") 
+Require("dplyr")
+Require("tidyverse")
+Require("reshape2")
+#Require("tidyr")
+
+inputsDir <- checkPath("inputs", create = TRUE)
+outputsDir <- checkPath("outputs", create = TRUE)
+
+downloadFolderArea <- checkPath(file.path(inputsDir, "studyArea"), create = TRUE)
+downloadFolderForestClass <- checkPath(file.path(inputsDir, "forestClassRasters"), create = TRUE)
+```
+
+
+# Get Inputs
+
+## Bring in the birdPreds list from postHocBinning
+
+```{r getExampleBirdPreds}
+
+#make fake birdMatrix
+landForClass <- rep(1:11, times = 15) 
+ageClasses <- rep(1:15, each = 11) 
+gbmPred <- runif(15*11)
+gbmPredDF<- data.frame(landForClass, gbmPred, ageClasses)
+birdMatricies <- reshape2::acast(gbmPredDF, 
+                              landForClass~ageClasses, 
+                              value.var= "gbmPred")
+
+
+#make fake nonForestedDF
+landForClass <- 1:39
+meanBirdDensity <- runif(39)
+nonforBirdPreds <- data.frame(landForClass, meanBirdDensity)
+
+
+# create table defining age classes
+maxAgeClass <- 15
+ageGrouping <- 10
+maxAge <- 290
+allAges <- c(0:maxAge) #make vector counting from 1 to to max age
+agesOverMaxAgeClass <- maxAge-(maxAgeClass*ageGrouping) 
+ageClasses <- c(1, rep(1:maxAgeClass, each = ageGrouping), rep(maxAgeClass, times = agesOverMaxAgeClass)) #make vector of age classes to correspond with the vector allAges
+ageClassDefs <- cbind(allAges,ageClasses) 
+ageClassDefs <- as.data.table(ageClassDefs) # put together in ageClassDefs data table
+ageClassDefs <- ageClassDefs[, ageClasses:=as.character(ageClasses)] 
+
+
+#make list object of all module outputs needed for Mapping Module 
+birdPreds <- list(birdMatricies, nonforBirdPreds, ageClassDefs) 
+names(birdPreds) <- c("birdMatricies", "nonforBirdPreds", "ageClassDefs")
+
+```
+
+
+## Bring in the rasters of forest age and cover type
+
+
+```{r LCC2005}
+rasterToMatch <- raster("C:/Users/RALAS6/Documents/Repositories/mapBins/LCC2005_V1_4a.tif")
+#rasterToMatch <- LandR::prepInputsLCC(destinationPath = inputsDir) #gets LCC2010
+```
+
+
+
+```{r studyArea}
+nameAreaShapefile <- "BCR6_BC.shp" #specify file name
+folderUrlArea <- "https://drive.google.com/file/d/1SjUKXOcNqDUkRxRTjwgLlLFjb5LRzbHy"
+archiveArea <- "BCR6_BC.zip" #give archive name
+
+studyArea <- prepInputs(targetFile = nameAreaShapefile, 
+                        url = folderUrlArea,
+                        archive = archiveArea, 
+                        alsoExtract = "similar", #Extract other files with similar names
+                        destinationPath = downloadFolderArea, #save the file to a folder in the working directory called studyArea
+                        fun = "raster::shapefile", #use the function shapefile
+                        targetCRS = crs(rasterToMatch),
+                        #rasterToMatch = rasterToMatch, #use the specified rasterToMatch to reproject to
+                        overwrite = TRUE,
+                        verbose = TRUE)
+# studyArea <- spTransform(studyArea, crs(rasterToMatch))
+
+rasterToMatch <- raster::crop(rasterToMatch, studyArea) #create landscapeRaster by cropping rasterToMatch to studyArea
+rasterToMatch <- raster::mask(rasterToMatch, studyArea) #mask landscapeRaster to studyArea
+#landscapeRasters <- unstack(landscapeRastersStack)
+
+```
+
+
+# Get Landscape Data
+
+
+```{r getForClassRaster}
+
+nameForClassRaster <- "VegTypeABBC.tif" #specify file name
+folderUrlForClass <- "https://drive.google.com/file/d/1cfrb-RhiwMD4XlS_yzRSQYPVh8ffwC0L/view?usp=sharing"
+archiveForClass <- "vegTypeABBC.zip" #give archive name
+
+forClassRaster <- prepInputs(targetFile = nameForClassRaster, 
+                        url = folderUrlForClass,
+                        archive = archiveForClass, 
+                        alsoExtract = "similar", #Extract other files with similar names
+                        destinationPath = downloadFolderForestClass, #save the file to a folder in the working directory called forestClassRasters
+                        fun = "raster::raster", #use the function raster
+                        #targetCRS = crs(rasterToMatch),
+                        rasterToMatch = rasterToMatch, #use the specified rasterToMatch to reproject to
+                        studyArea = studyArea,
+                        useCache = getOption("reproducible.useCache", FALSE),
+                        overwrite = TRUE,
+                        verbose = TRUE)
+
+names(forClassRaster) <- c("forClassRaster")
+
+forClassRaster[forClassRaster == 0] <- NA
+
+plot(forClassRaster) #visually check forClassRaster
+
+```
+
+
+
+```{r getNonForRaster}
+
+nameNonForRaster <- "LCC2005_V1_4a.tif" #specify file name
+folderUrlNonFor <- "https://drive.google.com/file/d/1E3iQRfaSPx0-b2GTgbLZqjo2Nhom39EK/view?usp=sharing"
+archiveNonFor <- "LCC2005_V1_4a.zip" #give archive name
+
+nonForRaster <- prepInputs(targetFile = nameNonForRaster, 
+                        url = folderUrlNonFor,
+                        archive = archiveNonFor, 
+                        alsoExtract = "similar", #Extract other files with similar names
+                        destinationPath = downloadFolderForestClass, #save the file to a folder in the working directory called forestClassRasters
+                        fun = "raster::raster", #use the function raster
+                        #targetCRS = crs(rasterToMatch),
+                        rasterToMatch = rasterToMatch, #use the specified rasterToMatch to reproject to
+                        studyArea = studyArea,
+                        useCache = getOption("reproducible.useCache", FALSE),
+                        overwrite = TRUE,
+                        verbose = TRUE)
+
+names(nonForRaster) <- c("nonForRaster")
+
+nonForRaster <- overlay(x = nonForRaster, y = forClassRaster, fun = function(x, y) {
+                         x[!is.na(y[])] <- NA
+                          return(x)
+                            })
+
+plot(nonForRaster) #visually check nonForRaster
+
+```
+
+```{r getForAgeRaster}
+
+nameForAgeRaster <- "ageRas.tif" #specify file name
+folderUrlAge <- "https://drive.google.com/file/d/1Ih4YLfIYX6nQcotdd41j4yRtZKRQxYo7/view?usp=sharing"
+archiveAge <- "ageRaster.zip" #give archive name
+
+forAgeRaster <- prepInputs(targetFile = nameForAgeRaster, 
+                        url = folderUrlAge,
+                        archive = archiveAge, 
+                        alsoExtract = "similar", #Extract other files with similar names
+                        destinationPath = downloadFolderForestClass, #save the file to a folder in the working directory called forestClassRasters
+                        fun = "raster::raster", #use the function raster
+                        #targetCRS = crs(rasterToMatch),
+                        rasterToMatch = rasterToMatch, #use the specified rasterToMatch to reproject to
+                        studyArea = studyArea,
+                        overwrite = TRUE,
+                        verbose = TRUE)
+
+names(forAgeRaster) <- c("forAgeRaster")
+
+plot(forAgeRaster) #visually check ageRaster
+```
+
+
+#Reclassify the forAgeRaster to ageClassRaster
+
+```{r make ageClassRaster}
+
+#reclassify forAgeRaster into a raster of forest age classes
+birdPreds$ageClassDefs <- birdPreds$ageClassDefs[, ageClasses:=as.integer(ageClasses)] #change data type of ageClassDefs
+ageClassRaster <- forAgeRaster #make copy of forAgeRaster to be reclassified
+ageClassRaster <- reclassify(ageClassRaster, birdPreds$ageClassDefs) #do the reclassification based on ageClassDefs
+names(ageClassRaster) <- "ageClassRaster" 
+ageClassRaster#check over the raster that has been reclassified
+plot(ageClassRaster)
+
+```
+
+
+# Create new raster of predicted bird densities for the whole studyArea
+
+## 1D mapBins
+
+```{r 1D mapBins}
+
+raster1DBins <- nonForRaster 
+raster1DBins <- reclassify(raster1DBins, birdPreds$nonforBirdPreds)
+plot(raster1DBins)
+
+```
+
+
+```{r 2D mapBins}
+
+# check that spatial extent is the same for ageClassraster and forClassraster
+extent(forClassRaster) == extent(ageClassRaster)
+
+#reform matrix
+matrix <- birdPreds$birdMatricies
+reclassTab2D <- melt(matrix)
+colnames(reclassTab2D) <- c( "forClass","ageClass", "birdDensityPred")
+
+#reclassify Raster according to reclassTab2D, ageClassRaster and forClassRaster
+raster2DBins <- raster(forClassRaster); raster2DBins[] = NA #make an empty NA raster the same as forClassRaster
+
+#make dataframe of all the data in forClassRaster and ageClassRaster and give each cell/row a new definition column, birdDensityPred, from reclassTab2d
+f = data.frame(forClass=forClassRaster[], ageClass=ageClassRaster[])
+vec = c(1:nrow(f))
+f[,3] = vec
+m = merge(f, reclassTab2D, all.x=TRUE)
+colnames(m)[3] = "ord"
+m = m[order(m$ord),]
+#populate raster2DBins with the birdDensityPred row of the table m
+raster2DBins[] = m$birdDensityPred
+
+#check the new raster
+raster2DBins
+plot(raster2DBins) 
+
+
+```
+
+
+```{r combine 1D and 2D rasters}
+
+birdPredsRaster <- cover(x = raster2DBins,
+                         y = raster1DBins,
+                         filename = "birdPredsRaster",
+                         overwrite = TRUE )
+
+names(birdPreds) <- c("birdpredsRaster")
+
+birdPredsRaster #visually check Raster
+plot(birdPredsRaster)
+
+```
+
+
+
+
+
+
+
