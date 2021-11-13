@@ -8,14 +8,16 @@ defineModule(sim, list(
   name = "mapBins",
   description = "",
   keywords = "",
-  authors = structure(list(list(given = c("First", "Middle"), family = "Last", role = c("aut", "cre"), email = "email@example.com", comment = NULL)), class = "person"),
+  authors = authors = c(
+       person("Isolde", "Lane-Shaw", role = "aut", email = "r.i.lane.shaw@gmail.com")),
   childModules = character(0),
   version = list(SpaDES.core = "1.0.9", mapBins = "0.0.0.9000"),
   timeframe = as.POSIXlt(c(NA, NA)),
   timeunit = "year",
   citation = list("citation.bib"),
   documentation = deparse(list("README.md", "mapBins.Rmd")), ## same file
-  reqdPkgs = list("ggplot2"),
+  reqdPkgs = list("ggplot2", "data.table", "rgdal", "sf", "raster", "LandR",
+                  "googledrive", "plotrix", "dplyr", "tidyverse", "reshape2"),
   parameters = rbind(
     #defineParameter("paramName", "paramClass", value, min, max, "parameter description"),
     defineParameter(".plots", "character", "screen", NA, NA,
@@ -35,12 +37,25 @@ defineModule(sim, list(
                     "Should caching of events or module be used?")
   ),
   inputObjects = bindrows(
-    #expectsInput("objectName", "objectClass", "input object description", sourceURL, ...),
-    expectsInput(objectName = NA, objectClass = NA, desc = NA, sourceURL = NA)
+    expectsInput(objectName = "rasterToMatch", objectClass = "RasterLayer",
+                 desc = "raster to match. default LCC2005.", sourceURL = NA),
+    expectsInput(objectName = "studyArea", objectClass = "SpatialPolygonsDataFrame",
+                 desc = "study area polygon", sourceURL = NA),
+    expectsInput(objectName = "birdList", objectClass = "list",
+                 desc = "list of birds to create rasters for", sourceURL = NA),
+    expectsInput(objectName = "birdPreds", objectClass = "list",
+                 desc = "list output by postHocBinning module", sourceURL = NA),
+    expectsInput(objectName = "forestClassRaster", objectClass = "RasterLayer",
+                 desc = "forest class raster (e.g., derived from LandR Biomass)", sourceURL = NA),
+    expectsInput(objectName = "ageRaster", objectClass = "RasterLayer",
+                 desc = "raster of integer ages for forest areas", sourceURL = NA),
+    expectsInput(objectName = "nonForClassRaster", objectClass = "RasterLayer",
+                 desc = "raster of land cover classes (eg derived from LCC05)", sourceURL = NA)
   ),
   outputObjects = bindrows(
     #createsOutput("objectName", "objectClass", "output object description", ...),
-    createsOutput(objectName = NA, objectClass = NA, desc = NA)
+    createsOutput(objectName = "birdPredsRasters", objectClass = "list",
+                  desc = "a list of rasters of the birdPreds mapped out")
   )
 ))
 
@@ -127,6 +142,79 @@ doEvent.mapBins = function(sim, eventTime, eventType) {
 ### template initialization
 Init <- function(sim) {
   # # ! ----- EDIT BELOW ----- ! #
+browser()
+  #reclassify ageRaster into a raster of forest age classes, according to ageClassDefs in birdPreds
+  birdPreds$ageClassDefs <- birdPreds$ageClassDefs[, ageClasses:=as.integer(ageClasses)] #change data type of ageClassDefs
+  ageClassRaster <- ageRaster #make copy of ageRaster to be reclassified
+  ageClassRaster <- reclassify(ageClassRaster, birdPreds$ageClassDefs) #do the reclassification based on ageClassDefs
+  names(ageClassRaster) <- "ageClassRaster"
+  sim$ageClassRaster #check over the raster that has been reclassified
+  plot(sim$ageClassRaster)
+
+
+  ###### MAKE BIRD PREDS RASTERS #######
+
+  sim$birdPredsRasters <- lapply(X = birdList, FUN = function(bird){
+
+      ##### MAKE RASTER OF 1D NON FOREST CLASSES #####
+
+      raster1DBins <- nonForRaster
+      birdTable <- eval(parse(text=paste("birdPreds$nonforBirdPreds$", bird, sep = "")))
+      raster1DBins <- reclassify(raster1DBins, birdTable)
+
+      #check it out visually
+      print("raster1DBins written")
+      raster1DBins
+      plot(raster1DBins) #check it out visually
+
+      ##### MAKE RASTER OF 2D FORESTED CLASSES #####
+
+      # check that spatial extent is the same for ageClassraster and forClassraster
+      extent(forClassRaster) == extent(ageClassRaster)
+
+      #re-form matrix
+      birdMatrix <- eval(parse(text=paste("birdPreds$birdMatricies$", bird, sep = "")))
+      reclassTab2D <- melt(birdMatrix)
+      colnames(reclassTab2D) <- c( "forClass","ageClass", "birdDensityPred")
+
+      #reclassify Raster according to reclassTab2D, ageClassRaster and forClassRaster
+      raster2DBins <- raster(forClassRaster); raster2DBins[] = NA #make an empty NA raster the same as forClassRaster
+
+      #make dataframe of all the data in forClassRaster and ageClassRaster and give each cell/row a new definition column, birdDensityPred, from reclassTab2d
+      f = data.frame(forClass=forClassRaster[], ageClass=ageClassRaster[])
+      vec = c(1:nrow(f))
+      f[,3] = vec
+      m = merge(f, reclassTab2D, all.x=TRUE)
+      colnames(m)[3] = "ord"
+      m = m[order(m$ord),]
+
+      #populate raster2DBins with the birdDensityPred row of the table m
+      raster2DBins[] = m$birdDensityPred
+
+      #check the new raster
+      print("raster2DBins written")
+      raster2DBins
+      plot(raster2DBins)
+
+
+      ##### COMBINE 1D AND 2D RASTERS INTO SINGLE MAP OF LANDSCAPE #####
+
+      birdPredsRaster <- cover(x = raster2DBins,
+                               y = raster1DBins,
+                               filename = "birdPredsRaster",
+                               overwrite = TRUE )
+
+      names(birdPreds) <- c("birdpredsRaster")
+
+      #visually check Raster
+      print("birdPredsRaster written")
+      birdPredsRaster
+      plot(birdPredsRaster)
+
+      return(birdPredsRaster)
+    })
+
+  names(sim$birdPredsRasters) <- birdList
 
   # ! ----- STOP EDITING ----- ! #
 
@@ -196,6 +284,12 @@ Event2 <- function(sim) {
   message(currentModule(sim), ": using dataPath '", dPath, "'.")
 
   # ! ----- EDIT BELOW ----- ! #
+
+  #give default birdList
+  if (!suppliedElsewhere("birdList")) {
+    sim$birdList <- c("OVEN", "CAWA", "BAWW")
+  }
+
 
   # ! ----- STOP EDITING ----- ! #
   return(invisible(sim))

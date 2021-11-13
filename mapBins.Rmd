@@ -34,7 +34,7 @@ library(SpaDES.core)
 setPaths(modulePath = file.path("C:/Users/RALAS6/Documents/Repositories/mapBins"))
 getPaths() # shows where the 4 relevant paths are
 
-times <- list(start = 0, end = 10)
+times <- list(start = 0, end = 1)
 
 parameters <- list(
   #.progress = list(type = "text", interval = 1), # for a progress bar
@@ -44,13 +44,21 @@ parameters <- list(
 )
 modules <- list("mapBins")
 objects <- list()
-inputs <- list()
-outputs <- list()
+inputs <- list(rasterToMatch = rasterToMatch,
+               studyArea = studyArea,
+               birdList = birdList,
+               birdPreds = birdPreds,
+               forestClassRaster = forClassRaster,
+               ageRaster = forAgeRaster,
+               nonForClassRaster = nonForClassRaster)
+outputs <- list("birdPredsRasters")
 
 mySim <- simInit(times = times, params = parameters, modules = modules,
                  objects = objects)
 
 mySimOut <- spades(mySim)
+
+#mySimOut <- simInitAndSpades(times = times, params = parameters, modules = modules, objects = objects)
 ```
 
 # Parameters
@@ -84,6 +92,167 @@ If `sourceURL` is specified, `downloadData("mapBins", "C:/Users/RALAS6/Documents
 ```{r moduleInputs, echo = FALSE}
 df_inputs <- SpaDES.core::moduleInputs("mapBins", "C:/Users/RALAS6/Documents/Repositories/mapBins")
 knitr::kable(df_inputs)
+```
+
+Here I fabricate/input some fake data for the testing the module
+
+```{r fabricatedInputs, echo = FALSE}
+
+inputsDir <- checkPath("inputs", create = TRUE)
+outputsDir <- checkPath("outputs", create = TRUE)
+
+downloadFolderArea <- checkPath(file.path(inputsDir, "studyArea"), create = TRUE)
+downloadFolderForestClass <- checkPath(file.path(inputsDir, "forestClassRasters"), create = TRUE)
+
+#make a birdPred objects
+
+#make a birdList
+birdList <- c("OVEN", "CAWA", "BAWW")
+
+#make fake list of birdMatricies 
+birdMatricies <- lapply(X = birdList, FUN = function(singleBird){
+
+  landForClass <- rep(1:11, times = 15) 
+  ageClasses <- rep(1:15, each = 11) 
+  gbmPred <- runif(15*11)
+  gbmPredDF<- data.frame(landForClass, gbmPred, ageClasses)
+  birdMatrix <- reshape2::acast(gbmPredDF, 
+                              landForClass~ageClasses, 
+                              value.var= "gbmPred")
+  return(birdMatrix)
+})
+names(birdMatricies) <- birdList
+
+
+#make fake nonForestedDF
+nonforBirdPreds <- lapply(X = birdList, FUN = function(singleBird){
+
+landForClass <- 1:39
+meanBirdDensity <- runif(39)
+nonForBirdPred <- data.frame(landForClass, meanBirdDensity)
+  return(nonForBirdPred)
+})
+names(nonforBirdPreds) <- birdList
+
+# create table defining age classes
+maxAgeClass <- 15
+ageGrouping <- 10
+maxAge <- 290
+allAges <- c(0:maxAge) #make vector counting from 1 to to max age
+agesOverMaxAgeClass <- maxAge-(maxAgeClass*ageGrouping) 
+ageClasses <- c(1, rep(1:maxAgeClass, each = ageGrouping), rep(maxAgeClass, times = agesOverMaxAgeClass)) #make vector of age classes to correspond with the vector allAges
+ageClassDefs <- cbind(allAges,ageClasses) 
+ageClassDefs <- as.data.table(ageClassDefs) # put together in ageClassDefs data table
+ageClassDefs <- ageClassDefs[, ageClasses:=as.character(ageClasses)] 
+
+
+#make list object of all module outputs needed for Mapping Module 
+birdPreds <- list(birdMatricies, nonforBirdPreds, ageClassDefs) 
+names(birdPreds) <- c("birdMatricies", "nonforBirdPreds", "ageClassDefs")
+
+
+
+#get rasterToMatch
+rasterToMatch <- raster("C:/Users/RALAS6/Documents/Repositories/mapBins/LCC2005_V1_4a.tif")
+#rasterToMatch <- LandR::prepInputsLCC(destinationPath = inputsDir) #gets LCC2010
+
+#get studyArea
+nameAreaShapefile <- "BCR6_BC.shp" #specify file name
+folderUrlArea <- "https://drive.google.com/file/d/1SjUKXOcNqDUkRxRTjwgLlLFjb5LRzbHy"
+archiveArea <- "BCR6_BC.zip" #give archive name
+
+studyArea <- prepInputs(targetFile = nameAreaShapefile, 
+                        url = folderUrlArea,
+                        archive = archiveArea, 
+                        alsoExtract = "similar", #Extract other files with similar names
+                        destinationPath = downloadFolderArea, #save the file to a folder in the working directory called studyArea
+                        fun = "raster::shapefile", #use the function shapefile
+                        targetCRS = crs(rasterToMatch),
+                        #rasterToMatch = rasterToMatch, #use the specified rasterToMatch to reproject to
+                        overwrite = TRUE,
+                        verbose = TRUE)
+# studyArea <- spTransform(studyArea, crs(rasterToMatch))
+
+rasterToMatch <- raster::crop(rasterToMatch, studyArea) #create landscapeRaster by cropping rasterToMatch to studyArea
+rasterToMatch <- raster::mask(rasterToMatch, studyArea) #mask landscapeRaster to studyArea
+#landscapeRasters <- unstack(landscapeRastersStack)
+
+#get forClassRaster
+
+nameForClassRaster <- "VegTypeABBC.tif" #specify file name
+folderUrlForClass <- "https://drive.google.com/file/d/1cfrb-RhiwMD4XlS_yzRSQYPVh8ffwC0L/view?usp=sharing"
+archiveForClass <- "vegTypeABBC.zip" #give archive name
+
+forClassRaster <- prepInputs(targetFile = nameForClassRaster, 
+                        url = folderUrlForClass,
+                        archive = archiveForClass, 
+                        alsoExtract = "similar", #Extract other files with similar names
+                        destinationPath = downloadFolderForestClass, #save the file to a folder in the working directory called forestClassRasters
+                        fun = "raster::raster", #use the function raster
+                        #targetCRS = crs(rasterToMatch),
+                        rasterToMatch = rasterToMatch, #use the specified rasterToMatch to reproject to
+                        studyArea = studyArea,
+                        useCache = getOption("reproducible.useCache", FALSE),
+                        overwrite = TRUE,
+                        verbose = TRUE)
+
+names(forClassRaster) <- c("forClassRaster")
+
+forClassRaster[forClassRaster == 0] <- NA
+
+plot(forClassRaster) #visually check forClassRaster
+
+
+#get forAgeRaster
+nameForAgeRaster <- "ageRas.tif" #specify file name
+folderUrlAge <- "https://drive.google.com/file/d/1Ih4YLfIYX6nQcotdd41j4yRtZKRQxYo7/view?usp=sharing"
+archiveAge <- "ageRaster.zip" #give archive name
+
+forAgeRaster <- prepInputs(targetFile = nameForAgeRaster, 
+                        url = folderUrlAge,
+                        archive = archiveAge, 
+                        alsoExtract = "similar", #Extract other files with similar names
+                        destinationPath = downloadFolderForestClass, #save the file to a folder in the working directory called forestClassRasters
+                        fun = "raster::raster", #use the function raster
+                        #targetCRS = crs(rasterToMatch),
+                        rasterToMatch = rasterToMatch, #use the specified rasterToMatch to reproject to
+                        studyArea = studyArea,
+                        overwrite = TRUE,
+                        verbose = TRUE)
+
+names(forAgeRaster) <- c("forAgeRaster")
+
+plot(forAgeRaster) #visually check ageRaster
+
+
+#get nonForRaster
+nameNonForRaster <- "LCC2005_V1_4a.tif" #specify file name
+folderUrlNonFor <- "https://drive.google.com/file/d/1E3iQRfaSPx0-b2GTgbLZqjo2Nhom39EK/view?usp=sharing"
+archiveNonFor <- "LCC2005_V1_4a.zip" #give archive name
+
+nonForRaster <- prepInputs(targetFile = nameNonForRaster, 
+                        url = folderUrlNonFor,
+                        archive = archiveNonFor, 
+                        alsoExtract = "similar", #Extract other files with similar names
+                        destinationPath = downloadFolderForestClass, #save the file to a folder in the working directory called forestClassRasters
+                        fun = "raster::raster", #use the function raster
+                        #targetCRS = crs(rasterToMatch),
+                        rasterToMatch = rasterToMatch, #use the specified rasterToMatch to reproject to
+                        studyArea = studyArea,
+                        useCache = getOption("reproducible.useCache", FALSE),
+                        overwrite = TRUE,
+                        verbose = TRUE)
+
+names(nonForRaster) <- c("nonForRaster")
+
+nonForRaster <- overlay(x = nonForRaster, y = forClassRaster, fun = function(x, y) {
+                         x[!is.na(y[])] <- NA
+                          return(x)
+                            })
+
+plot(nonForRaster) #visually check nonForRaster
+
+
 ```
 
 ## Output data
