@@ -8,7 +8,7 @@ defineModule(sim, list(
   name = "mapBins",
   description = "",
   keywords = "",
-  authors = authors = c(
+  authors = c(
        person("Isolde", "Lane-Shaw", role = "aut", email = "r.i.lane.shaw@gmail.com")),
   childModules = character(0),
   version = list(SpaDES.core = "1.0.9", mapBins = "0.0.0.9000"),
